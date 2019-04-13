@@ -20,6 +20,9 @@ log.setLevel(LOG_LEVEL)
 class PATH:
     root = Path(__file__).parent.resolve()
 
+    cluster_py = root / 'cluster.py'
+    shell = os.environ.get('SHELL', '/bin/sh')
+
     bin = root / 'bin'
     nomad_bin = bin / 'nomad'
     consul_bin = bin / 'consul'
@@ -38,6 +41,12 @@ class PATH:
 def run(cmd, **kwargs):
     log.debug('+ %s', cmd)
     return subprocess.check_output(cmd, shell=True, **kwargs).decode('latin1')
+
+
+def exec_shell(cmd):
+    log.debug('+ %s', cmd)
+    os.chdir(PATH.root)
+    os.execv(PATH.shell, [PATH.shell, '-c', cmd])
 
 
 def detect_interface():
@@ -118,13 +127,13 @@ class CONFIG:
 CONFIG.supervisor = lambda username: f'''\
 [program:nomad]
 user = {username}
-command = {PATH.nomad_bin} agent -config {PATH.nomad_hcl}
+command = {PATH.cluster_py} runserver nomad
 redirect_stderr = true
 autostart = {OPTIONS.supervisor_autostart}
 
 [program:consul]
 user = {username}
-command = {PATH.consul_bin} agent -config-file {PATH.consul_hcl}
+command = {PATH.cluster_py} runserver consul
 redirect_stderr = true
 autostart = {OPTIONS.supervisor_autostart}
 
@@ -217,6 +226,25 @@ def configure():
     _writefile(PATH.nomad_hcl, CONFIG.nomad())
 
 
+def exec_nomad():
+    exec_shell(f'{PATH.nomad_bin} agent -config {PATH.nomad_hcl}')
+
+
+def exec_consul():
+    exec_shell(f'{PATH.consul_bin} agent -config-file {PATH.consul_hcl}')
+
+
+def runserver(name):
+    """ Run server [name] in foreground. """
+    services = {
+        'nomad': exec_nomad,
+        'consul': exec_consul,
+    }
+
+    exec_service = services[name]
+    exec_service()
+
+
 class SubcommandParser(argparse.ArgumentParser):
 
     def add_subcommands(self, name, subcommands):
@@ -238,6 +266,7 @@ def main():
     parser.add_subcommands('cmd', [
         install,
         configure,
+        runserver,
     ])
 
     (options, extra_args) = parser.parse_known_args()
